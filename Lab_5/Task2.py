@@ -1,4 +1,8 @@
 from pyspark.sql import SparkSession
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import StringIndexer, VectorAssembler, spark
+from pyspark.ml.classification import RandomForestClassifier
+from pyspark.sql.functions import col
 
 # Re-read the data for a fresh start
 df2 = spark.read \
@@ -7,7 +11,6 @@ df2 = spark.read \
     .load("titanic.csv")
 
 # Select relevant columns
-from pyspark.sql.functions import col
 
 dataset2 = df2.select(
     col('Survived').cast('float'),
@@ -24,34 +27,28 @@ dataset2 = dataset2.replace('?', None).dropna(how='any')
 print(f"\nRecords after cleaning: {dataset2.count()}")
 dataset2.show(5)
 
-# Import Pipeline and required components
-from pyspark.ml import Pipeline
-from pyspark.ml.feature import StringIndexer, VectorAssembler, spark
-from pyspark.ml.classification import RandomForestClassifier
+
 
 # Define pipeline stages
-# Stage 1: Index 'Sex' column
 sex_indexer = StringIndexer(
     inputCol='Sex',
     outputCol='Gender',
     handleInvalid='keep'
 )
 
-# Stage 2: Index 'Embarked' column
+
 embarked_indexer = StringIndexer(
     inputCol='Embarked',
     outputCol='Boarded',
     handleInvalid='keep'
 )
 
-# Stage 3: Assemble features into a vector
 feature_cols = ['Pclass', 'Age', 'Fare', 'Gender', 'Boarded']
 assembler2 = VectorAssembler(
     inputCols=feature_cols,
     outputCol='features'
 )
 
-# Stage 4: Random Forest Classifier
 rf2 = RandomForestClassifier(
     labelCol='Survived',
     featuresCol='features',
@@ -94,26 +91,6 @@ evaluator2 = MulticlassClassificationEvaluator(
 
 accuracy2 = evaluator2.evaluate(predictions2)
 
-
-# Additional metrics for Pipeline model
-print(f"Precision: {precision_evaluator.evaluate(predictions2):.4f}")
-print(f"Recall: {recall_evaluator.evaluate(predictions2):.4f}")
-print(f"F1 Score: {f1_evaluator.evaluate(predictions2):.4f}")
-
-
-print("\n\n" + "="*70)
-print("COMPARISON: Project 1 vs Project 2")
-print("="*70)
-print(f"Project 1 (Without Pipeline) Accuracy: {accuracy2:.4f}")
-print(f"Project 2 (With Pipeline) Accuracy:    {accuracy2:.4f}")
-print("\nKey Differences:")
-print("- Project 1: Manual sequential preprocessing steps")
-print("- Project 2: All transformations chained in a Pipeline")
-print("\nAdvantages of Pipeline approach:")
-print("1. Cleaner, more maintainable code")
-print("2. Easy to save and load the entire workflow")
-print("3. Prevents data leakage during cross-validation")
-print("4. Simplifies hyperparameter tuning with CrossValidator")
 
 # Stop Spark session
 spark.stop()
