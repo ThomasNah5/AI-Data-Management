@@ -81,7 +81,3 @@ plt.tight_layout()
 plt.savefig('Lab_3/penguin_clustering_results.png', dpi=150)
 plt.show()
 
-# Additional: Print centroid locations
-print("\nCluster Centroids:")
-for i, centroid in enumerate(centroids):
-    print(f"  Cluster {i}: Bill Length = {centroid[0]:.2f} mm, Bill Depth = {centroid[1]:.2f} mm")
