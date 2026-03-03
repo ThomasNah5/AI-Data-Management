@@ -1,185 +1,193 @@
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
 from sklearn.datasets import fetch_openml
 from sklearn.model_selection import train_test_split
-from sklearn import svm  # Import svm model (as taught in lab)
-from sklearn.ensemble import RandomForestClassifier  # Random Forest (as taught in lab)
-from sklearn.metrics import mean_squared_error, accuracy_score
+from sklearn.linear_model import SGDClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, log_loss
 import matplotlib.pyplot as plt
 
 
 
-# Fetch MNIST dataset from OpenML
+
+print("Fetching MNIST dataset...")
 mnist = fetch_openml('mnist_784', version=1, as_frame=False)
 
-# Get features and labels
 X, y = mnist.data, mnist.target.astype(int)
 
 print(f"Dataset shape: {X.shape}")
 print(f"Number of classes: {len(np.unique(y))}")
 print(f"Classes: {np.unique(y)}")
 
+# Split data
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=1000, train_size=6000, random_state=42
 )
 
-# Normalize the pixel values (0-255 to 0-1)
+# Normalize pixel values (0-255 to 0-1)
 X_train = X_train / 255.0
 X_test = X_test / 255.0
+
+# Standardize for SGDClassifier (improves convergence)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
 
 print(f"Training set size: {X_train.shape[0]}")
 print(f"Testing set size: {X_test.shape[0]}")
 
-# Convert to PyTorch tensors for Linear Regression
-X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-
-# Create one-hot encoded labels for 10 classes (0-9)
-y_train_onehot = torch.zeros(len(y_train), 10)
-y_train_onehot[torch.arange(len(y_train)), y_train] = 1
-y_test_onehot = torch.zeros(len(y_test), 10)
-y_test_onehot[torch.arange(len(y_test)), y_test] = 1
-
-# Keep original labels for MSE calculation (to compare with SVM/RF)
-y_train_labels = torch.tensor(y_train, dtype=torch.long)
-y_test_labels = torch.tensor(y_test, dtype=torch.long)
+# Create one-hot encoded labels for MSE calculation on probabilities
+n_classes = 10
+y_test_onehot = np.zeros((len(y_test), n_classes))
+y_test_onehot[np.arange(len(y_test)), y_test] = 1
 
 # Training parameters
 n_epochs = 10
 batch_size = 64
 
-# Store MSE history for each algorithm
-mse_lr = []  # Linear Regression
-mse_svm = []  # SVM
-mse_rf = []  # Random Forest
+# Store metrics history
+mse_logreg = []      
+mse_svm = []         
+mse_rf = []          
+acc_logreg = []      
+acc_svm = []         
+acc_rf = []          
+
+
+def compute_mse_from_proba(y_true_onehot, y_proba):
+    return np.mean((y_true_onehot - y_proba) ** 2)
+
+
+def shuffle_data(X, y):
+    indices = np.random.permutation(len(X))
+    return X[indices], y[indices]
 
 
 
-model_lr = nn.Sequential(
-    nn.Linear(784, 10),
-    nn.Softmax(dim=1)
+
+# SGDClassifier with log_loss = Logistic Regression
+clf_logreg = SGDClassifier(
+    loss='log_loss',           
+    penalty='l2',
+    alpha=0.0001,
+    max_iter=1,
+    warm_start=True,
+    random_state=42
 )
-print("Model architecture:")
-print(model_lr)
 
-
-loss_fn = nn.MSELoss()
-optimizer = optim.Adam(model_lr.parameters(), lr=0.001)
-
-print("\nTraining Linear Regression model...")
-for epoch in range(n_epochs):
-    model_lr.train()
-    for i in range(0, len(X_train_tensor), batch_size):
-        # Take a batch
-        Xbatch = X_train_tensor[i:i+batch_size]
-        ybatch = y_train_onehot[i:i+batch_size]
-        
-        # Forward pass
-        y_pred = model_lr(Xbatch)
-        loss = loss_fn(y_pred, ybatch)
-        
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        
-        # Update weights
-        optimizer.step()
-    
-    
-    model_lr.eval()
-    with torch.no_grad():
-        y_pred_test = model_lr(X_test_tensor)
-        y_pred_classes = torch.argmax(y_pred_test, dim=1).numpy()
-        mse = mean_squared_error(y_test, y_pred_classes)
-        mse_lr.append(mse)
-    
-    print(f"Epoch {epoch+1}/{n_epochs} - MSE: {mse:.4f}")
-
-# Training SVM (Linear Kernel) model..
+classes = np.arange(10)  # All possible classes 0-9
 
 for epoch in range(n_epochs):
-  
-    subset_size = int(len(X_train) * (epoch + 1) / n_epochs)
-    X_subset = X_train[:subset_size]
-    y_subset = y_train[:subset_size]
+    # Shuffle data each epoch
+    X_shuffled, y_shuffled = shuffle_data(X_train_scaled, y_train)
     
-    # Create a svm Classifier with Linear Kernel 
-    clf_svm = svm.SVC(kernel='linear', C=1.0)
+    # Train with partial_fit (true epoch-based training)
+    for i in range(0, len(X_shuffled), batch_size):
+        X_batch = X_shuffled[i:i+batch_size]
+        y_batch = y_shuffled[i:i+batch_size]
+        clf_logreg.partial_fit(X_batch, y_batch, classes=classes)
     
-    # Train the model using the training sets
-    clf_svm.fit(X_subset, y_subset)
+    # Evaluate: use decision_function + softmax to avoid NaN issues
+    decision_scores = clf_logreg.decision_function(X_test_scaled)
+    # Apply stable softmax
+    exp_scores = np.exp(decision_scores - np.max(decision_scores, axis=1, keepdims=True))
+    y_proba = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
     
-    # Predict the response for test dataset
-    y_pred = clf_svm.predict(X_test)
+    y_pred = clf_logreg.predict(X_test_scaled)
     
-    # Calculate MSE
-    mse = mean_squared_error(y_test, y_pred)
+    # Compute MSE on probabilities vs one-hot labels (correct approach)
+    mse = compute_mse_from_proba(y_test_onehot, y_proba)
+    acc = accuracy_score(y_test, y_pred)
+    
+    mse_logreg.append(mse)
+    acc_logreg.append(acc)
+    
+    print(f"Epoch {epoch+1}/{n_epochs} - MSE: {mse:.4f} | Accuracy: {acc*100:.2f}%")
+
+
+
+
+# SGDClassifier with hinge loss = Linear SVM
+clf_svm = SGDClassifier(
+    loss='hinge',              
+    penalty='l2',
+    alpha=0.0001,
+    max_iter=1,
+    warm_start=True,
+    random_state=42
+)
+
+for epoch in range(n_epochs):
+    # Shuffle data each epoch
+    X_shuffled, y_shuffled = shuffle_data(X_train_scaled, y_train)
+    
+    # Train with partial_fit (true epoch-based training)
+    for i in range(0, len(X_shuffled), batch_size):
+        X_batch = X_shuffled[i:i+batch_size]
+        y_batch = y_shuffled[i:i+batch_size]
+        clf_svm.partial_fit(X_batch, y_batch, classes=classes)
+    
+    # Evaluate: SVM with hinge loss doesn't have predict_proba by default
+    decision_scores = clf_svm.decision_function(X_test_scaled)
+    
+    # Apply softmax to convert decision scores to probabilities
+    exp_scores = np.exp(decision_scores - np.max(decision_scores, axis=1, keepdims=True))
+    y_proba = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+    
+    y_pred = clf_svm.predict(X_test_scaled)
+    
+    # Compute MSE on probabilities vs one-hot labels
+    mse = compute_mse_from_proba(y_test_onehot, y_proba)
+    acc = accuracy_score(y_test, y_pred)
+    
     mse_svm.append(mse)
+    acc_svm.append(acc)
     
-    print(f"Epoch {epoch+1}/{n_epochs} (samples={subset_size}) - MSE: {mse:.4f}")
+    print(f"Epoch {epoch+1}/{n_epochs} - MSE: {mse:.4f} | Accuracy: {acc*100:.2f}%")
 
-# Simulate epochs by increasing number of estimators
-max_depth = 15  
-print(f"\nTraining Random Forest (max_depth={max_depth})...")
+
+
+max_depth = 15
 
 for epoch in range(n_epochs):
-    # Incrementally increase estimators to simulate epochs
+    # Simulate epochs: increase number of trees
     n_estimators = (epoch + 1) * 10
     
-    rf_clf = RandomForestClassifier(
+    clf_rf = RandomForestClassifier(
         n_estimators=n_estimators,
         max_depth=max_depth,
         random_state=42,
         n_jobs=-1
     )
     
- 
-    rf_clf.fit(X_train, y_train)
-    y_pred = rf_clf.predict(X_test)
-    mse = mean_squared_error(y_test, y_pred)
-    mse_rf.append(mse)
+    clf_rf.fit(X_train, y_train)
     
-    print(f"Epoch {epoch+1}/{n_epochs} (n_estimators={n_estimators}) - MSE: {mse:.4f}")
+    # Get predicted probabilities
+    y_proba = clf_rf.predict_proba(X_test)
+    y_pred = clf_rf.predict(X_test)
+    
+    # Compute MSE on probabilities vs one-hot labels
+    mse = compute_mse_from_proba(y_test_onehot, y_proba)
+    acc = accuracy_score(y_test, y_pred)
+    
+    mse_rf.append(mse)
+    acc_rf.append(acc)
+    
+    print(f"Epoch {epoch+1}/{n_epochs} (n_estimators={n_estimators}) - MSE: {mse:.4f} | Accuracy: {acc*100:.2f}%")
 
-
-
-# Linear Regression accuracy
-with torch.no_grad():
-    y_pred_lr = model_lr(X_test_tensor)
-    # Get predicted class (argmax of 10 outputs)
-    y_pred_lr_classes = torch.argmax(y_pred_lr, dim=1).numpy()
-lr_accuracy = accuracy_score(y_test, y_pred_lr_classes)
-
-# SVM accuracy
-y_pred_svm = clf_svm.predict(X_test)
-svm_accuracy = accuracy_score(y_test, y_pred_svm)
-
-# Random Forest accuracy
-y_pred_rf = rf_clf.predict(X_test)
-rf_accuracy = accuracy_score(y_test, y_pred_rf)
-
-print(f"Linear Regression Accuracy: {lr_accuracy*100:.2f}%")
-print(f"SVM (Linear Kernel) Accuracy: {svm_accuracy*100:.2f}%")
-print(f"Random Forest Accuracy: {rf_accuracy*100:.2f}%")
-
-print("\nFinal MSE Values:")
-print(f"Linear Regression MSE: {mse_lr[-1]:.4f}")
-print(f"SVM MSE: {mse_svm[-1]:.4f}")
-print(f"Random Forest MSE: {mse_rf[-1]:.4f}")
 
 
 epochs = range(1, n_epochs + 1)
 
+# Single MSE vs Epoch plot as required by assignment
 plt.figure(figsize=(10, 6))
 
 # Plot MSE for each algorithm with different colors
+# Legend labels: "SVM", "LR", "RF" as specified in assignment
 plt.plot(epochs, mse_svm, 'b-o', label='SVM', linewidth=2, markersize=6)
-plt.plot(epochs, mse_lr, 'r-s', label='LR', linewidth=2, markersize=6)
+plt.plot(epochs, mse_logreg, 'r-s', label='LR', linewidth=2, markersize=6)
 plt.plot(epochs, mse_rf, 'g-^', label='RF', linewidth=2, markersize=6)
 
-# Customize the plot
 plt.xlabel('Epoch', fontsize=12)
 plt.ylabel('Mean Squared Error (MSE)', fontsize=12)
 plt.title('MSE Error vs Epoch for Handwriting Recognition (MNIST)', fontsize=14)
@@ -187,8 +195,9 @@ plt.legend(loc='upper right', fontsize=11)
 plt.grid(True, alpha=0.3)
 plt.xticks(epochs)
 
-# Adjust layout and save
 plt.tight_layout()
 plt.savefig('Lab_3/mse_vs_epoch.png', dpi=150)
-print("Plot saved as 'Lab_3/mse_vs_epoch.png'")
+print("\nPlot saved as 'Lab_3/mse_vs_epoch.png'")
 plt.show()
+
+
