@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 
 
 
-print("Fetching MNIST dataset...")
 mnist = fetch_openml('mnist_784', version=1, as_frame=False)
 
 X, y = mnist.data, mnist.target.astype(int)
@@ -19,16 +18,16 @@ print(f"Dataset shape: {X.shape}")
 print(f"Number of classes: {len(np.unique(y))}")
 print(f"Classes: {np.unique(y)}")
 
-# Split data
+
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=1000, train_size=6000, random_state=42
+    X, y, test_size=10000, train_size=6000, random_state=42
 )
 
-# Normalize pixel values (0-255 to 0-1)
+
 X_train = X_train / 255.0
 X_test = X_test / 255.0
 
-# Standardize for SGDClassifier (improves convergence)
+
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
@@ -36,12 +35,12 @@ X_test_scaled = scaler.transform(X_test)
 print(f"Training set size: {X_train.shape[0]}")
 print(f"Testing set size: {X_test.shape[0]}")
 
-# Create one-hot encoded labels for MSE calculation on probabilities
+
 n_classes = 10
 y_test_onehot = np.zeros((len(y_test), n_classes))
 y_test_onehot[np.arange(len(y_test)), y_test] = 1
 
-# Training parameters
+
 n_epochs = 10
 batch_size = 64
 
@@ -65,7 +64,7 @@ def shuffle_data(X, y):
 
 
 
-# SGDClassifier with log_loss = Logistic Regression
+# SGDClassifier with log_loss 
 clf_logreg = SGDClassifier(
     loss='log_loss',           
     penalty='l2',
@@ -75,7 +74,7 @@ clf_logreg = SGDClassifier(
     random_state=42
 )
 
-classes = np.arange(10)  # All possible classes 0-9
+classes = np.arange(10)  
 
 for epoch in range(n_epochs):
     # Shuffle data each epoch
@@ -87,15 +86,15 @@ for epoch in range(n_epochs):
         y_batch = y_shuffled[i:i+batch_size]
         clf_logreg.partial_fit(X_batch, y_batch, classes=classes)
     
-    # Evaluate: use decision_function + softmax to avoid NaN issues
+    
     decision_scores = clf_logreg.decision_function(X_test_scaled)
-    # Apply stable softmax
+ 
     exp_scores = np.exp(decision_scores - np.max(decision_scores, axis=1, keepdims=True))
     y_proba = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
     
     y_pred = clf_logreg.predict(X_test_scaled)
     
-    # Compute MSE on probabilities vs one-hot labels (correct approach)
+    # Compute MSE on probabilities 
     mse = compute_mse_from_proba(y_test_onehot, y_proba)
     acc = accuracy_score(y_test, y_pred)
     
@@ -107,7 +106,7 @@ for epoch in range(n_epochs):
 
 
 
-# SGDClassifier with hinge loss = Linear SVM
+# SGDClassifier with hinge loss
 clf_svm = SGDClassifier(
     loss='hinge',              
     penalty='l2',
@@ -127,7 +126,7 @@ for epoch in range(n_epochs):
         y_batch = y_shuffled[i:i+batch_size]
         clf_svm.partial_fit(X_batch, y_batch, classes=classes)
     
-    # Evaluate: SVM with hinge loss doesn't have predict_proba by default
+
     decision_scores = clf_svm.decision_function(X_test_scaled)
     
     # Apply softmax to convert decision scores to probabilities
@@ -136,7 +135,7 @@ for epoch in range(n_epochs):
     
     y_pred = clf_svm.predict(X_test_scaled)
     
-    # Compute MSE on probabilities vs one-hot labels
+  
     mse = compute_mse_from_proba(y_test_onehot, y_proba)
     acc = accuracy_score(y_test, y_pred)
     
@@ -149,45 +148,24 @@ for epoch in range(n_epochs):
 
 max_depth = 15
 
-for epoch in range(n_epochs):
-    # Simulate epochs: increase number of trees
-    n_estimators = (epoch + 1) * 10
-    
-    clf_rf = RandomForestClassifier(
-        n_estimators=n_estimators,
-        max_depth=max_depth,
-        random_state=42,
-        n_jobs=-1
-    )
-    
-    clf_rf.fit(X_train, y_train)
-    
-    # Get predicted probabilities
-    y_proba = clf_rf.predict_proba(X_test)
-    y_pred = clf_rf.predict(X_test)
-    
-    # Compute MSE on probabilities vs one-hot labels
-    mse = compute_mse_from_proba(y_test_onehot, y_proba)
-    acc = accuracy_score(y_test, y_pred)
-    
-    mse_rf.append(mse)
-    acc_rf.append(acc)
-    
-    print(f"Epoch {epoch+1}/{n_epochs} (n_estimators={n_estimators}) - MSE: {mse:.4f} | Accuracy: {acc*100:.2f}%")
+clf_rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+clf_rf.fit(X_train, y_train)
+y_proba = clf_rf.predict_proba(X_test)
+y_pred = clf_rf.predict(X_test)
+acc = accuracy_score(y_test, y_pred)
+mse_rf = compute_mse_from_proba(y_test_onehot, y_proba)
+print(f"Random Forest - MSE: {mse_rf:.4f} | Accuracy: {acc*100:.2f}%")
 
 
 
 epochs = range(1, n_epochs + 1)
 
-# Single MSE vs Epoch plot as required by assignment
 plt.figure(figsize=(10, 6))
-
-# Plot MSE for each algorithm with different colors
-# Legend labels: "SVM", "LR", "RF" as specified in assignment
 plt.plot(epochs, mse_svm, 'b-o', label='SVM', linewidth=2, markersize=6)
 plt.plot(epochs, mse_logreg, 'r-s', label='LR', linewidth=2, markersize=6)
-plt.plot(epochs, mse_rf, 'g-^', label='RF', linewidth=2, markersize=6)
 
+
+plt.hlines(mse_rf, epochs[0], epochs[-1], colors='g', linestyles='--', label='RF', linewidth=2)
 plt.xlabel('Epoch', fontsize=12)
 plt.ylabel('Mean Squared Error (MSE)', fontsize=12)
 plt.title('MSE Error vs Epoch for Handwriting Recognition (MNIST)', fontsize=14)
